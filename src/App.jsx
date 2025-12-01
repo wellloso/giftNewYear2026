@@ -5,7 +5,8 @@ export default function RFIDScanner() {
   const [excelData, setExcelData] = useState([]);
   const [cardcode, setCardcode] = useState("");
   const [result, setResult] = useState(null);
-
+  const [logs, setLogs] = useState([]);
+  const uniqueCount = new Set(logs.map((item) => item["รหัสพนักงาน"])).size;
   const inputRef = useRef(null);
 
   const handleFileUpload = (e) => {
@@ -27,26 +28,14 @@ export default function RFIDScanner() {
   const formatDate = (value) => {
     if (!value) return "";
 
-    // กรณี Excel ส่งมาเป็นตัวเลข serial date
     if (typeof value === "number") {
       const excelStart = new Date(Date.UTC(1899, 11, 30));
       const date = new Date(excelStart.getTime() + value * 86400000);
-
-      const day = String(date.getUTCDate()).padStart(2, "0");
-      const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-      const year = date.getUTCFullYear();
-
-      return `${day}/${month}/${year}`;
+      return date.toLocaleDateString("th-TH");
     }
 
-    // กรณีเป็น string เช่น "11/26/2025"
     const d = new Date(value);
-    if (!isNaN(d)) {
-      const day = String(d.getDate()).padStart(2, "0");
-      const month = String(d.getMonth() + 1).padStart(2, "0");
-      const year = d.getFullYear();
-      return `${day}/${month}/${year}`;
-    }
+    if (!isNaN(d)) return d.toLocaleDateString("th-TH");
 
     return value;
   };
@@ -56,19 +45,62 @@ export default function RFIDScanner() {
     setCardcode(value);
 
     if (value.length >= 8) {
-      const found = excelData.find((row) => {
-        return String(row.Cardcode).trim() === value + ":";
-      });
+      const found = excelData.find(
+        (row) => String(row.Cardcode).trim() === value + ":"
+      );
 
-      setResult(found || { error: "ไม่พบข้อมูลในระบบ" });
+      const now = new Date();
+      const timeStr = now.toLocaleString("th-TH");
+      const today = now.toLocaleDateString("th-TH");
 
-      // ⭐ ล้างช่อง input หลังสแกนเสร็จ
+      if (found) {
+        const empId = found["Emp. ID"];
+
+        // ตรวจสแกนซ้ำ
+        const isDuplicate = logs.some(
+          (log) => log["รหัสพนักงาน"] === empId && log["วันที่สแกน"] === today
+        );
+
+        if (isDuplicate) {
+          setResult({
+            error: "สแกนซ้ำ",
+            duplicate: true,
+          });
+        } else {
+          // บันทึก log ใหม่
+          setLogs((prev) => [
+            ...prev,
+            {
+              รหัสพนักงาน: empId,
+              "ชื่อ - สกุล": `${found["คำนำหน้า"]} ${found["ชื่อ"]} ${found["นามสกุล"]}`,
+              วันที่สแกน: today,
+              เวลาที่สแกน: timeStr,
+            },
+          ]);
+
+          // ตั้งค่าผลลัพธ์
+          setResult({ ...found, scanTime: timeStr });
+        }
+      } else {
+        setResult({ error: "ไม่พบข้อมูลในระบบ" });
+      }
+
       setTimeout(() => {
         setCardcode("");
         inputRef.current?.focus();
-      }, 200); // เว้นเล็กน้อยเพื่อให้ค่าทำงานก่อน
+      }, 200);
     }
   };
+
+  const downloadLogsExcel = () => {
+    if (logs.length === 0) return;
+
+    const worksheet = XLSX.utils.json_to_sheet(logs);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Scan Logs");
+    XLSX.writeFile(workbook, "scan_logs.xlsx");
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-purple-100 p-4">
       <div className="bg-white shadow-2xl rounded-2xl p-8 w-full max-w-lg">
@@ -82,7 +114,7 @@ export default function RFIDScanner() {
             type="file"
             accept=".xlsx,.xls"
             onChange={handleFileUpload}
-            className="border border-gray-300 rounded-lg p-2 cursor-pointer bg-gray-50 hover:bg-gray-100"
+            className="border border-gray-300 rounded-lg p-2 bg-gray-50 hover:bg-gray-100"
           />
 
           <label className="font-medium">แตะบัตร</label>
@@ -100,7 +132,11 @@ export default function RFIDScanner() {
         {result && (
           <div className="mt-6 p-5 border rounded-xl bg-blue-50 shadow-inner text-xl">
             {result.error ? (
-              <p className="text-red-600 font-bold text-center text-2xl">
+              <p
+                className={`font-bold text-center text-2xl ${
+                  result.duplicate ? "text-yellow-600" : "text-red-600"
+                }`}
+              >
                 {result.error}
               </p>
             ) : (
@@ -116,8 +152,54 @@ export default function RFIDScanner() {
                   <strong>วันที่รับของขวัญ:</strong>{" "}
                   {formatDate(result["วันที่รับของขวัญ"])}
                 </p>
+                <p>
+                  <strong>เวลาสแกน:</strong> {result.scanTime}
+                </p>
               </div>
             )}
+          </div>
+        )}
+
+        {logs.length > 0 && (
+          <div className="mt-10 bg-white shadow-xl p-5 rounded-2xl">
+            <h2 className="text-2xl font-bold mb-3 text-center text-green-700">
+              ประวัติการสแกน
+            </h2>
+
+            {/* จำนวนคนที่สแกนแล้ว */}
+            <h3 className="text-xl font-bold text-center text-blue-700 mt-2">
+              จำนวนคนที่สแกนแล้ว:{" "}
+              {new Set(logs.map((l) => l["รหัสพนักงาน"])).size} คน
+            </h3>
+
+            <div className="space-y-2 max-h-60 overflow-y-auto mt-4">
+              {logs.map((item, index) => (
+                <div
+                  key={index}
+                  className="p-3 border rounded-lg bg-gray-50 text-lg"
+                >
+                  <p>
+                    <strong>รหัสพนักงาน:</strong> {item["รหัสพนักงาน"]}
+                  </p>
+                  <p>
+                    <strong>ชื่อ:</strong> {item["ชื่อ - สกุล"]}
+                  </p>
+                  <p>
+                    <strong>วันที่:</strong> {item["วันที่สแกน"]}
+                  </p>
+                  <p>
+                    <strong>เวลา:</strong> {item["เวลาที่สแกน"]}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <button
+              onClick={downloadLogsExcel}
+              className="mt-4 w-full bg-green-600 text-white py-3 rounded-xl text-xl hover:bg-green-700"
+            >
+              ดาวน์โหลด Log เป็น Excel
+            </button>
           </div>
         )}
       </div>
