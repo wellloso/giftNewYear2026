@@ -8,4 +8,5 @@ export default defineConfig({
     react(),
     tailwindcss(), // Add the Tailwind CSS plugin to the plugins array
   ],
+  base: "giftNewYear2026",
 });
